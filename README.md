@@ -13,6 +13,29 @@
 
 ![login page](docs/login-page.png)
 
+## 让 AI 自己装（推荐）
+
+不想自己一条条敲命令，就把下面这一行丢给你的 DSH（或任何能跑 shell 的 coding agent）：
+
+```text
+用 curl -fsSL 下载 https://raw.githubusercontent.com/wangpi26/dsh-remote/main/docs/agent-setup.md 并严格按它执行；缺的信息先问我，每个阶段的验收命令都要真的跑过再往下走。
+```
+
+它会自己读 [docs/agent-setup.md](docs/agent-setup.md)、探测环境、分平台装 relay 和 host、
+验证隧道与登录、配好 cookie 续期，最后给你一份结果表。你只需要提供**只有你知道的东西**：
+域名、relay 的 SSH 访问、nginx 是不是跑在 Docker 里。
+
+<details>
+<summary>无人值守（参数都已确定，不需要中途提问）</summary>
+
+```bash
+dsh --profile headless "$(curl -fsSL https://raw.githubusercontent.com/wangpi26/dsh-remote/main/docs/agent-setup.md)"
+```
+
+`headless` 是一次性任务：不能中途向人提问，所以跑之前把域名/relay 这些信息补进任务文本里。
+
+</details>
+
 ## 目录
 
 - [架构与认证流程](#架构与认证流程)
