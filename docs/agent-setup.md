@@ -109,17 +109,20 @@ ssh <relay> 'cd ~/dsh-remote/relay && sudo bash install-relay.sh \
 - `--conf-dir` = **宿主机上写文件的位置**；`--container-conf-dir` = **容器里 nginx 看到的路径**。
   写反不报参数错，但渲染出的 `include` 指向容器里不存在的文件，`nginx -t` 会报
   `open() ... failed (No such file or directory)`。
+- 容器形态下脚本可能警告证书"is not visible from the host"：**这是正常的**，
+  证书是给容器里的 nginx 读的，不是给宿主机读的。不要为了消掉这条警告去改路径。
 - 脚本会打印**登录账号和随机密码**：把它交给用户存进密码管理器，**不要贴回对话**。
 
-验收：
+验收（此时隧道还没建，`127.0.0.1:9100` 连不通是正常的，下一步才建）：
 
 ```bash
-ssh <relay> 'sudo docker exec <容器名> nginx -t'   # 或 nginx -t；必须是 successful
-ssh <relay> 'curl -s -o /dev/null -w "%{http_code}\n" -H "Host: <域名>" http://127.0.0.1:9100/ || true'
+ssh <relay> 'sudo docker exec <容器名> nginx -t'        # 裸机则 nginx -t；必须 successful
+ssh <relay> 'curl -s -o /dev/null -w "%{http_code}\n" https://<域名>/login'
 ```
 
-此时 `/login` 返回 **500 是正常的**（cookie include 还是占位内容），Phase 5 推完 cookie 才好。
-如果 `/login` 返回 404，说明 vhost 没生效 —— 重跑 install-relay.sh。
+`/login` 返回 **500 是正常的**（cookie include 还是占位内容），Phase 5 推完 cookie 才好。
+返回 **404** 说明 vhost 没生效，重跑 install-relay.sh；返回 **502** 说明 nginx 找不到上游，
+但 `/login` 不走代理，出现 502 反而说明打到别的站点去了，检查 server_name。
 
 ---
 
