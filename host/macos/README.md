@@ -53,9 +53,69 @@ port change while the tunnel is up (that needs a DSH restart).
     --relay-user root --identity-file ~/.ssh/id_ed25519_dsh_admin \
     --container <your-openresty-container>
 
-# 5. Schedule the cookie refresh daily (launchd) so the 30-day cookie never
-#    expires; see the example in refresh-cookie.sh's header.
+# 5. Schedule the cookie refresh every day: see "Scheduling the refresh" below.
 ```
+
+`install-macos.sh` also takes `--no-launchd` when you only want the trustedHosts
+patch, the tunnel key and the initial cookie (for example when another supervisor
+runs the tunnel), and `--remote-port` when 9100 is already taken by another
+computer on the same relay.
+
+## Scheduling the refresh
+
+DSH caps the cookie at 30 days, and an expired cookie shows up as "login
+succeeds, then the page bounces back to `/login`". Windows gets two scheduled
+tasks from `install-windows.ps1`; on macOS `install-macos.sh` only schedules the
+tunnel, so the refresh needs its own LaunchAgent.
+
+Save this as `~/Library/LaunchAgents/com.dsh-remote.refresh.plist`, replacing
+`/Users/YOU` and the example hostnames:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dsh-remote.refresh</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/YOU/dsh-remote/host/macos/refresh-cookie.sh</string>
+        <string>--authority</string>
+        <string>dsh.example.com</string>
+        <string>--relay-host</string>
+        <string>relay.example.com</string>
+        <string>--relay-user</string>
+        <string>root</string>
+        <string>--identity-file</string>
+        <string>/Users/YOU/.ssh/id_ed25519_dsh_admin</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>17</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/YOU/Library/Logs/dsh-remote-refresh.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOU/Library/Logs/dsh-remote-refresh.log</string>
+</dict>
+</plist>
+```
+
+```bash
+plutil -lint ~/Library/LaunchAgents/com.dsh-remote.refresh.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.dsh-remote.refresh.plist
+tail -f ~/Library/Logs/dsh-remote-refresh.log
+```
+
+`StartCalendarInterval` fires at 04:17 local time; if the Mac is asleep then,
+launchd runs the job once after wake. launchd's default PATH already contains
+`/usr/bin/python3` (3.9+), which is all `mint-cookie.py` needs. Uninstall with
+`launchctl bootout gui/$(id -u)/com.dsh-remote.refresh` and delete the plist.
 
 ## Port discovery
 

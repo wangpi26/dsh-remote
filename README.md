@@ -76,6 +76,15 @@ VPS · nginx / OpenResty
 * 一个域名 + TLS 证书（Let's Encrypt 或 1Panel 申请均可）。
 * 电脑上有 SSH 客户端（Windows 10/11 自带 OpenSSH Client）。
 
+## 开始之前：3 个最容易卡住的点
+
+1. **域名只需要一个**。`dsh.example.com` 是给浏览器用的；下文里的 `relay.example.com`
+   指的就是这台 VPS，写它的域名或公网 IP 都行，不需要再申请一个域名。
+2. **VPS 要放行 80 和 443**。云厂商的安全组/防火墙默认通常只开 22；不放行的话
+   证书签不下来，站点也访问不到。
+3. **一台电脑占一个远端端口**。vhost 默认反代到 `127.0.0.1:9100`，所以第二台电脑
+   要么换一个远端端口并改 vhost（见[日常维护](#日常维护)），要么另用一套域名。
+
 ## 快速开始
 
 以下用 `dsh.example.com` / `relay.example.com` 举例，替换成你自己的。
@@ -130,9 +139,12 @@ sudo bash install-relay.sh \
 > 1Panel 在站点设置变化时可能重写 vhost。若登录页突然 404，重新跑一次
 > `install-relay.sh` 即可（备份和热重载都在脚本里）。
 
-### 3. 在 Windows 电脑上安装 host
+### 3. 在电脑上安装 host
 
-在**管理员 PowerShell**中：
+> **macOS 用户**：等价步骤见[下文 macOS 一节](#macos)，命令是 `install-macos.sh`；
+> 第 4、5 步与此处完全相同（只是把 PowerShell 换成对应的 shell 命令）。
+
+**Windows**：在**管理员 PowerShell**中：
 
 ```powershell
 git clone https://github.com/wangpi26/dsh-remote.git
@@ -233,6 +245,8 @@ curl -I -H 'Host: dsh.example.com' http://127.0.0.1:9100/
 | 改登录密码 | 重跑 `install-relay.sh --password '<新密码>'`（会重新渲染同一 vhost） |
 | 轮换隧道 key | 删除电脑上的 key 并重新生成，再在 relay 的 `authorized_keys` 替换对应行 |
 | 检查任务 | `schtasks /Query /TN dsh-remote-tunnel /V /FO LIST` |
+| 检查任务（macOS） | `launchctl print gui/$(id -u)/com.dsh-remote.tunnel`；日志在 `~/.local/state/dsh-remote/` |
+| 再加一台电脑 | 换一个远端端口（如 9101）并另建站点：`setup-tunnel-user.sh --port 9101`、`install-*.--remote-port 9101`，relay 侧用 `install-relay.sh --upstream 127.0.0.1:9101` 建第二个 vhost。**同一个 9100 只能被一台电脑占用** |
 
 > **cookie 过期会表现为"登录成功但页面反复跳登录页"**：登录页确实下发了 cookie，
 > 但 DSH 拒绝了过期/签名错误的 cookie，于是 401 → 又跳 `/login`。先看
@@ -246,6 +260,80 @@ macOS 的脚本在 [`host/macos/`](host/macos/)，与 Windows 设计一致：
 * `tunnel.sh`：自动发现 DSH 端口并保持隧道；
 * `install-macos.sh`：合并 trustedHosts、生成 key、mint cookie、安装 launchd；
 * `refresh-cookie.sh`：推 cookie + `nginx -t` + reload，可挂 launchd/cron。
+
+**步骤**（替代上面第 3 步；第 4、5 步与 Windows 相同，只是换成 shell 命令）：
+
+```bash
+git clone https://github.com/wangpi26/dsh-remote.git
+cd dsh-remote
+
+# 3.1 装 host：合并 trustedHosts、生成隧道 key、mint cookie、装 launchd 隧道守护
+bash host/macos/install-macos.sh \
+  --domain dsh.example.com --relay-host relay.example.com \
+  --relay-user dsh-tunnel --remote-port 9100
+
+# 4. 在 VPS 上授权公钥（公钥就是 3.1 打印的那一行，直接贴进来）
+sudo bash relay/setup-tunnel-user.sh --user dsh-tunnel --port 9100 \
+  --pubkey 'ssh-ed25519 AAAA...your-key... dsh-remote'
+
+# 5. 推一次 cookie（需要能写 nginx 配置的身份，通常是 root）
+bash host/macos/refresh-cookie.sh --authority dsh.example.com \
+  --relay-host relay.example.com --relay-user root \
+  --identity-file ~/.ssh/id_ed25519_dsh_admin
+```
+
+> nginx 在 Docker 里（1Panel/OpenResty）时，`refresh-cookie.sh` 要加
+> `--container <容器名>`，并把 `--remote-inc` 指到宿主机上被挂载进容器的 conf.d 路径，
+> 例如 `/opt/1panel/apps/openresty/openresty/conf/conf.d/dsh-cookie.inc`。
+> 只想做 patch/key/cookie、不装 launchd 时，给 `install-macos.sh` 加 `--no-launchd`。
+
+**定时续期**：cookie 最长 30 天，过期会表现为"登录成功但反复跳登录页"。Windows 那套会自动
+建计划任务，macOS 需要自己装一个 LaunchAgent。把下面存成
+`~/Library/LaunchAgents/com.dsh-remote.refresh.plist`，把 `/Users/YOU` 和示例域名换成实际值：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dsh-remote.refresh</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/YOU/dsh-remote/host/macos/refresh-cookie.sh</string>
+        <string>--authority</string>
+        <string>dsh.example.com</string>
+        <string>--relay-host</string>
+        <string>relay.example.com</string>
+        <string>--relay-user</string>
+        <string>root</string>
+        <string>--identity-file</string>
+        <string>/Users/YOU/.ssh/id_ed25519_dsh_admin</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>17</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/YOU/Library/Logs/dsh-remote-refresh.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOU/Library/Logs/dsh-remote-refresh.log</string>
+</dict>
+</plist>
+```
+
+```bash
+plutil -lint ~/Library/LaunchAgents/com.dsh-remote.refresh.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.dsh-remote.refresh.plist
+tail -f ~/Library/Logs/dsh-remote-refresh.log
+```
+
+> launchd 默认 PATH 里有 `/usr/bin/python3`（3.9+），满足 `mint-cookie.py` 的 3.8+ 要求，
+> 不需要额外声明 PATH。
 
 已在 macOS（Apple silicon）上用真实 DSH 桌面端验证：cookie 本机 200、错误 authority 401；
 `tunnel.sh` 自动发现端口并在 relay 上建立 `127.0.0.1:9101`；launchd 加载、`launchctl print`
@@ -364,7 +452,8 @@ nginx -t && nginx -s reload
 * 认证 cookie 的算法来自 DSH 桌面端的 `@deepseek-ai/dsh-client-connection`
   实现：`dsh-auth-<sha256(authority)>` + `v1.<payload>.<hmac>`，secret 存在
   `~/.dsh/.credentials.yaml` 的 `client-connection/browser-session` grant 记录里。
-* 实测环境：Windows 11 + DSH 桌面端（2026-10 版本）+ OpenResty 1.21（1Panel Docker）。
+* 实测环境：Windows 11 + DSH 桌面端（2026-10 版本）+ OpenResty 1.21（1Panel Docker）；
+  macOS 27（Apple silicon）+ DSH 桌面端 + 同一个 relay。
 * 判断是否仍兼容的最快方法：
 
   ```powershell
