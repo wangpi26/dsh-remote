@@ -24,7 +24,7 @@
   - [4. 授权隧道公钥并推送 cookie](#4-授权隧道公钥并推送-cookie)
   - [5. 验证](#5-验证)
 - [日常维护](#日常维护)
-- [macOS（实验性）](#macos实验性)
+- [macOS](#macos)
 - [安全模型与局限](#安全模型与局限)
 - [故障排查](#故障排查)
 - [兼容性](#兼容性)
@@ -69,7 +69,7 @@ VPS · nginx / OpenResty
 
 ## 前置条件
 
-* 一台运行 **DSH 桌面端** 的电脑（Windows 已验证；macOS 见[实验性说明](#macos实验性)）。
+* 一台运行 **DSH 桌面端** 的电脑（Windows 与 macOS 均已验证）。
   桌面端需要先启动过一次，以生成 `~/.dsh/.credentials.yaml` 和 desktop profile。
 * 一台有公网 IP 的 Linux VPS，已安装 **nginx 或 OpenResty（需要 ngx_lua）**。
   Docker 化的 1Panel/OpenResty 也可以。
@@ -238,17 +238,32 @@ curl -I -H 'Host: dsh.example.com' http://127.0.0.1:9100/
 > 但 DSH 拒绝了过期/签名错误的 cookie，于是 401 → 又跳 `/login`。先看
 > `refresh-cookie.log` 是否成功，再手动跑一次 `refresh-cookie.ps1`。
 
-## macOS（实验性）
+## macOS
 
 macOS 的脚本在 [`host/macos/`](host/macos/)，与 Windows 设计一致：
 
-* `mint-cookie.py`：跨平台，读 `~/.dsh/.credentials.yaml` 生成 cookie（**已验证**，Windows 上也测过）；
-* `tunnel.sh`：`pgrep`/`lsof` 自动发现 DSH 端口并保持隧道；
-* `install-macos.sh`：patch trustedHosts、生成 key、mint cookie、安装 launchd；
+* `mint-cookie.py`：跨平台，读 `~/.dsh/.credentials.yaml` 生成 cookie（**已验证**）；
+* `tunnel.sh`：自动发现 DSH 端口并保持隧道；
+* `install-macos.sh`：合并 trustedHosts、生成 key、mint cookie、安装 launchd；
 * `refresh-cookie.sh`：推 cookie + `nginx -t` + reload，可挂 launchd/cron。
 
-这些 macOS 脚本**尚未在 Mac 上实测**（维护者只有 Windows 环境），欢迎 PR。
-详见 [`host/macos/README.md`](host/macos/README.md)。
+已在 macOS（Apple silicon）上用真实 DSH 桌面端验证：cookie 本机 200、错误 authority 401；
+`tunnel.sh` 自动发现端口并在 relay 上建立 `127.0.0.1:9101`；launchd 加载、`launchctl print`
+running、kill 后 KeepAlive 拉起；trustedHosts 幂等且**热加载**（不重启 DSH 生效）；
+`refresh-cookie.sh` 的暂存上传 + `install -m 600` + `nginx -t` 路径。
+
+macOS 与 Windows 行为不同的地方（脚本已处理，细节见
+[`host/macos/README.md`](host/macos/README.md)）：
+
+* **`pgrep -f dsh-desktop-host` 在 macOS 上看不到 DSH 宿主进程**——它是 Electron 的子进程，
+  `pgrep` 读不到它的 argv（只有 Helper 进程能匹配），但 `ps -axo pid=,args=` 读得到。
+  `tunnel.sh` 因此先用 `ps`、再退回 `pgrep`/`lsof`。
+* 监听地址可能是 `127.0.0.1`，也可能是 IPv6-only 的 `[::1]`；隧道转发目标跟随实际绑定。
+* launchd 的默认 PATH 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，`bash`/`ssh`/`lsof`/`ps` 都在其中，
+  不需要额外声明 PATH。
+* `ssh` 会把 argv 用空格拼接、由远端 shell 重新切分，所以 `refresh-cookie.sh` 不再把
+  `"docker exec … nginx -t"` 当整串参数传递（旧写法会退化成 `eval docker`：打印帮助却返回 0，
+  形成"假成功"）。nginx 跑在 Docker 里时用 `--container <容器名>`。
 
 ## 安全模型与局限
 
@@ -375,7 +390,7 @@ nginx -t && nginx -s reload
 | `host/windows/tunnel.ps1` | 端口发现 + 反向隧道 watchdog（断线/换端口自动重连） |
 | `host/windows/mint-cookie.ps1` | 从本地 DSH 凭据生成 cookie include，可本地 200 验证 |
 | `host/windows/refresh-cookie.ps1` | 生成 + 上传 + `nginx -t` + reload（失败回滚） |
-| `host/macos/*` | macOS 实验性实现（cookie 生成脚本跨平台） |
+| `host/macos/*` | macOS 实现（cookie 生成脚本跨平台；host 路径已在 macOS 实测） |
 | `docs/login-page.png` | 登录页截图 |
 
 ## License
