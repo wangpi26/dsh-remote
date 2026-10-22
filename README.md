@@ -164,7 +164,7 @@ relay 执行 `setup-tunnel-user.sh`。
 **手动分步**（等价命令）：
 
 ```powershell
-# 只 patch trustedHosts
+# 手动分步：只生成 cookie include（install-windows.ps1 已包含这一步）
 .\mint-cookie.ps1 -Authority dsh.example.com -WriteInc "$env:LOCALAPPDATA\dsh-remote\dsh-cookie.inc"
 
 # 生成 cookie 并本地验证（200 才算成功；DSH 端口用 Get-NetTCPConnection 查）
