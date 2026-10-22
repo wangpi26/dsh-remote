@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Push a freshly minted DSH browser-session cookie to the relay and reload nginx.
-# EXPERIMENTAL: not tested by the maintainer on a Mac (Windows equivalent was).
+# Validated on macOS; the Windows equivalent is host/windows/refresh-cookie.ps1.
 #
 # The relay login page hands this cookie to browsers after a successful login.
 # The cookie expires (DSH caps it at 30 days), so schedule this daily/weekly:
@@ -75,32 +75,52 @@ fi
 scp "${SshOptions[@]}" -P "$RELAY_SSH_PORT" "$INC" "${RELAY_USER}@${RELAY_HOST}:${REMOTE_STAGING}"
 
 if [ -n "$CONTAINER" ]; then
-  TEST_CMD="docker exec $CONTAINER nginx -t"
-  RELOAD_CMD="docker exec $CONTAINER nginx -s reload"
+  RELAY_HINT="docker exec $CONTAINER nginx"
 else
-  TEST_CMD="nginx -t"
-  RELOAD_CMD="nginx -s reload"
+  RELAY_HINT="host nginx (pass --container <name> when nginx runs in Docker)"
 fi
-if [ "$NO_RELOAD" = "1" ]; then RELOAD_CMD="true"; fi
 
+# ssh joins its argv with spaces and the remote shell re-splits it, so a command
+# string such as "docker exec name nginx -t" arrives as several positional
+# parameters and `eval "$3"` evaluates to "docker", prints its usage and exits 0
+# without testing anything. Pass plain values and build the command on the relay.
 ssh "${SshOptions[@]}" -p "$RELAY_SSH_PORT" "${RELAY_USER}@${RELAY_HOST}" bash -s -- \
-  "$REMOTE_INC" "$REMOTE_STAGING" "$TEST_CMD" "$RELOAD_CMD" <<'REMOTE'
+  "$REMOTE_INC" "$REMOTE_STAGING" "$CONTAINER" "$NO_RELOAD" <<'REMOTE'
 set -e
 INC="$1"
 STAGING="$2"
-TEST_CMD="$3"
-RELOAD_CMD="$4"
+CONTAINER="$3"
+NO_RELOAD="$4"
+
+if [ -n "$CONTAINER" ]; then
+  ngx() { docker exec "$CONTAINER" nginx "$@"; }
+else
+  ngx() { nginx "$@"; }
+fi
+
 BACKUP="$INC.bak-$(date +%Y%m%d-%H%M%S)"
 if [ -f "$INC" ]; then cp -a "$INC" "$BACKUP"; fi
 install -m 600 "$STAGING" "$INC"
 chmod 600 "$INC"
-if ! eval "$TEST_CMD"; then
-  echo "nginx -t failed; restoring $BACKUP" >&2
-  if [ -f "$BACKUP" ]; then cp -a "$BACKUP" "$INC"; fi
+# The staging file carries a live bearer credential; do not leave it behind.
+rm -f "$STAGING"
+if ! ngx -t; then
+  echo "nginx -t failed; the relay config was left untouched" >&2
+  if [ -f "$BACKUP" ]; then
+    cp -a "$BACKUP" "$INC"
+    echo "restored $INC from $BACKUP" >&2
+  else
+    rm -f "$INC"
+    echo "removed $INC (no previous include to restore)" >&2
+  fi
   exit 1
 fi
-eval "$RELOAD_CMD"
+if [ "$NO_RELOAD" = "1" ]; then
+  echo "reload skipped (--no-reload)"
+else
+  ngx -s reload
+fi
 echo "cookie include installed: $INC"
 REMOTE
 
-echo "relay updated: ${RELAY_USER}@${RELAY_HOST}:${REMOTE_INC}"
+echo "relay updated: ${RELAY_USER}@${RELAY_HOST}:${REMOTE_INC} (tested via ${RELAY_HINT})"

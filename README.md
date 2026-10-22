@@ -13,6 +13,29 @@
 
 ![login page](docs/login-page.png)
 
+## 让 AI 自己装（推荐）
+
+不想自己一条条敲命令，就把下面这一行丢给你的 DSH（或任何能跑 shell 的 coding agent）：
+
+```text
+用 curl -fsSL 下载 https://raw.githubusercontent.com/wangpi26/dsh-remote/main/docs/agent-setup.md 并严格按它执行；缺的信息先问我，每个阶段的验收命令都要真的跑过再往下走。
+```
+
+它会自己读 [docs/agent-setup.md](docs/agent-setup.md)、探测环境、分平台装 relay 和 host、
+验证隧道与登录、配好 cookie 续期，最后给你一份结果表。你只需要提供**只有你知道的东西**：
+域名、relay 的 SSH 访问、nginx 是不是跑在 Docker 里。
+
+<details>
+<summary>无人值守（参数都已确定，不需要中途提问）</summary>
+
+```bash
+dsh --profile headless "$(curl -fsSL https://raw.githubusercontent.com/wangpi26/dsh-remote/main/docs/agent-setup.md)"
+```
+
+`headless` 是一次性任务：不能中途向人提问，所以跑之前把域名/relay 这些信息补进任务文本里。
+
+</details>
+
 ## 目录
 
 - [架构与认证流程](#架构与认证流程)
@@ -24,7 +47,7 @@
   - [4. 授权隧道公钥并推送 cookie](#4-授权隧道公钥并推送-cookie)
   - [5. 验证](#5-验证)
 - [日常维护](#日常维护)
-- [macOS（实验性）](#macos实验性)
+- [macOS](#macos)
 - [安全模型与局限](#安全模型与局限)
 - [故障排查](#故障排查)
 - [兼容性](#兼容性)
@@ -69,12 +92,21 @@ VPS · nginx / OpenResty
 
 ## 前置条件
 
-* 一台运行 **DSH 桌面端** 的电脑（Windows 已验证；macOS 见[实验性说明](#macos实验性)）。
+* 一台运行 **DSH 桌面端** 的电脑（Windows 与 macOS 均已验证）。
   桌面端需要先启动过一次，以生成 `~/.dsh/.credentials.yaml` 和 desktop profile。
 * 一台有公网 IP 的 Linux VPS，已安装 **nginx 或 OpenResty（需要 ngx_lua）**。
   Docker 化的 1Panel/OpenResty 也可以。
 * 一个域名 + TLS 证书（Let's Encrypt 或 1Panel 申请均可）。
 * 电脑上有 SSH 客户端（Windows 10/11 自带 OpenSSH Client）。
+
+## 开始之前：3 个最容易卡住的点
+
+1. **域名只需要一个**。`dsh.example.com` 是给浏览器用的；下文里的 `relay.example.com`
+   指的就是这台 VPS，写它的域名或公网 IP 都行，不需要再申请一个域名。
+2. **VPS 要放行 80 和 443**。云厂商的安全组/防火墙默认通常只开 22；不放行的话
+   证书签不下来，站点也访问不到。
+3. **一台电脑占一个远端端口**。vhost 默认反代到 `127.0.0.1:9100`，所以第二台电脑
+   要么换一个远端端口并改 vhost（见[日常维护](#日常维护)），要么另用一套域名。
 
 ## 快速开始
 
@@ -127,12 +159,19 @@ sudo bash install-relay.sh \
   --container-conf-dir /usr/local/openresty/nginx/conf/conf.d
 ```
 
+> `--conf-dir` 是**宿主机上写文件的位置**，`--container-conf-dir` 是 **nginx 容器里看到的路径**，
+> 两者是同一份目录的两种视角。写反了不会报参数错，但渲染出的 vhost 里 `include` 会指向
+> 容器里不存在的路径，`nginx -t` 报 `open() ... failed (No such file or directory)`。
+
 > 1Panel 在站点设置变化时可能重写 vhost。若登录页突然 404，重新跑一次
 > `install-relay.sh` 即可（备份和热重载都在脚本里）。
 
-### 3. 在 Windows 电脑上安装 host
+### 3. 在电脑上安装 host
 
-在**管理员 PowerShell**中：
+> **macOS 用户**：等价步骤见[下文 macOS 一节](#macos)，命令是 `install-macos.sh`；
+> 第 4、5 步与此处完全相同（只是把 PowerShell 换成对应的 shell 命令）。
+
+**Windows**：在**管理员 PowerShell**中：
 
 ```powershell
 git clone https://github.com/wangpi26/dsh-remote.git
@@ -233,22 +272,113 @@ curl -I -H 'Host: dsh.example.com' http://127.0.0.1:9100/
 | 改登录密码 | 重跑 `install-relay.sh --password '<新密码>'`（会重新渲染同一 vhost） |
 | 轮换隧道 key | 删除电脑上的 key 并重新生成，再在 relay 的 `authorized_keys` 替换对应行 |
 | 检查任务 | `schtasks /Query /TN dsh-remote-tunnel /V /FO LIST` |
+| 检查任务（macOS） | `launchctl print gui/$(id -u)/com.dsh-remote.tunnel`；日志在 `~/.local/state/dsh-remote/` |
+| 再加一台电脑 | 换一个远端端口（如 9101）并另建站点：`setup-tunnel-user.sh --port 9101`、`install-*.--remote-port 9101`，relay 侧用 `install-relay.sh --upstream 127.0.0.1:9101` 建第二个 vhost。**同一个 9100 只能被一台电脑占用** |
 
 > **cookie 过期会表现为"登录成功但页面反复跳登录页"**：登录页确实下发了 cookie，
 > 但 DSH 拒绝了过期/签名错误的 cookie，于是 401 → 又跳 `/login`。先看
 > `refresh-cookie.log` 是否成功，再手动跑一次 `refresh-cookie.ps1`。
 
-## macOS（实验性）
+## macOS
 
 macOS 的脚本在 [`host/macos/`](host/macos/)，与 Windows 设计一致：
 
-* `mint-cookie.py`：跨平台，读 `~/.dsh/.credentials.yaml` 生成 cookie（**已验证**，Windows 上也测过）；
-* `tunnel.sh`：`pgrep`/`lsof` 自动发现 DSH 端口并保持隧道；
-* `install-macos.sh`：patch trustedHosts、生成 key、mint cookie、安装 launchd；
+* `mint-cookie.py`：跨平台，读 `~/.dsh/.credentials.yaml` 生成 cookie（**已验证**）；
+* `tunnel.sh`：自动发现 DSH 端口并保持隧道；
+* `install-macos.sh`：合并 trustedHosts、生成 key、mint cookie、安装 launchd；
 * `refresh-cookie.sh`：推 cookie + `nginx -t` + reload，可挂 launchd/cron。
 
-这些 macOS 脚本**尚未在 Mac 上实测**（维护者只有 Windows 环境），欢迎 PR。
-详见 [`host/macos/README.md`](host/macos/README.md)。
+**步骤**（替代上面第 3 步；第 4、5 步与 Windows 相同，只是换成 shell 命令）：
+
+```bash
+git clone https://github.com/wangpi26/dsh-remote.git
+cd dsh-remote
+
+# 3.1 装 host：合并 trustedHosts、生成隧道 key、mint cookie、装 launchd 隧道守护
+bash host/macos/install-macos.sh \
+  --domain dsh.example.com --relay-host relay.example.com \
+  --relay-user dsh-tunnel --remote-port 9100
+
+# 4. 在 VPS 上授权公钥（公钥就是 3.1 打印的那一行，直接贴进来）
+sudo bash relay/setup-tunnel-user.sh --user dsh-tunnel --port 9100 \
+  --pubkey 'ssh-ed25519 AAAA...your-key... dsh-remote'
+
+# 5. 推一次 cookie（需要能写 nginx 配置的身份，通常是 root）
+bash host/macos/refresh-cookie.sh --authority dsh.example.com \
+  --relay-host relay.example.com --relay-user root \
+  --identity-file ~/.ssh/id_ed25519_dsh_admin
+```
+
+> nginx 在 Docker 里（1Panel/OpenResty）时，`refresh-cookie.sh` 要加
+> `--container <容器名>`，并把 `--remote-inc` 指到宿主机上被挂载进容器的 conf.d 路径，
+> 例如 `/opt/1panel/apps/openresty/openresty/conf/conf.d/dsh-cookie.inc`。
+> 只想做 patch/key/cookie、不装 launchd 时，给 `install-macos.sh` 加 `--no-launchd`。
+
+**定时续期**：cookie 最长 30 天，过期会表现为"登录成功但反复跳登录页"。Windows 那套会自动
+建计划任务，macOS 需要自己装一个 LaunchAgent。把下面存成
+`~/Library/LaunchAgents/com.dsh-remote.refresh.plist`，把 `/Users/YOU` 和示例域名换成实际值：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dsh-remote.refresh</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/YOU/dsh-remote/host/macos/refresh-cookie.sh</string>
+        <string>--authority</string>
+        <string>dsh.example.com</string>
+        <string>--relay-host</string>
+        <string>relay.example.com</string>
+        <string>--relay-user</string>
+        <string>root</string>
+        <string>--identity-file</string>
+        <string>/Users/YOU/.ssh/id_ed25519_dsh_admin</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>17</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/YOU/Library/Logs/dsh-remote-refresh.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOU/Library/Logs/dsh-remote-refresh.log</string>
+</dict>
+</plist>
+```
+
+```bash
+plutil -lint ~/Library/LaunchAgents/com.dsh-remote.refresh.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.dsh-remote.refresh.plist
+tail -f ~/Library/Logs/dsh-remote-refresh.log
+```
+
+> launchd 默认 PATH 里有 `/usr/bin/python3`（3.9+），满足 `mint-cookie.py` 的 3.8+ 要求，
+> 不需要额外声明 PATH。
+
+已在 macOS（Apple silicon）上用真实 DSH 桌面端验证：cookie 本机 200、错误 authority 401；
+`tunnel.sh` 自动发现端口并在 relay 上建立 `127.0.0.1:9101`；launchd 加载、`launchctl print`
+running、kill 后 KeepAlive 拉起；trustedHosts 幂等且**热加载**（不重启 DSH 生效）；
+`refresh-cookie.sh` 的暂存上传 + `install -m 600` + `nginx -t` 路径。
+
+macOS 与 Windows 行为不同的地方（脚本已处理，细节见
+[`host/macos/README.md`](host/macos/README.md)）：
+
+* **`pgrep -f dsh-desktop-host` 在 macOS 上看不到 DSH 宿主进程**——它是 Electron 的子进程，
+  `pgrep` 读不到它的 argv（只有 Helper 进程能匹配），但 `ps -axo pid=,args=` 读得到。
+  `tunnel.sh` 因此先用 `ps`、再退回 `pgrep`/`lsof`。
+* 监听地址可能是 `127.0.0.1`，也可能是 IPv6-only 的 `[::1]`；隧道转发目标跟随实际绑定。
+* launchd 的默认 PATH 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，`bash`/`ssh`/`lsof`/`ps` 都在其中，
+  不需要额外声明 PATH。
+* `ssh` 会把 argv 用空格拼接、由远端 shell 重新切分，所以 `refresh-cookie.sh` 不再把
+  `"docker exec … nginx -t"` 当整串参数传递（旧写法会退化成 `eval docker`：打印帮助却返回 0，
+  形成"假成功"）。nginx 跑在 Docker 里时用 `--container <容器名>`。
 
 ## 安全模型与局限
 
@@ -349,7 +479,8 @@ nginx -t && nginx -s reload
 * 认证 cookie 的算法来自 DSH 桌面端的 `@deepseek-ai/dsh-client-connection`
   实现：`dsh-auth-<sha256(authority)>` + `v1.<payload>.<hmac>`，secret 存在
   `~/.dsh/.credentials.yaml` 的 `client-connection/browser-session` grant 记录里。
-* 实测环境：Windows 11 + DSH 桌面端（2026-10 版本）+ OpenResty 1.21（1Panel Docker）。
+* 实测环境：Windows 11 + DSH 桌面端（2026-10 版本）+ OpenResty 1.21（1Panel Docker）；
+  macOS 27（Apple silicon）+ DSH 桌面端 + 同一个 relay。
 * 判断是否仍兼容的最快方法：
 
   ```powershell
@@ -375,7 +506,7 @@ nginx -t && nginx -s reload
 | `host/windows/tunnel.ps1` | 端口发现 + 反向隧道 watchdog（断线/换端口自动重连） |
 | `host/windows/mint-cookie.ps1` | 从本地 DSH 凭据生成 cookie include，可本地 200 验证 |
 | `host/windows/refresh-cookie.ps1` | 生成 + 上传 + `nginx -t` + reload（失败回滚） |
-| `host/macos/*` | macOS 实验性实现（cookie 生成脚本跨平台） |
+| `host/macos/*` | macOS 实现（cookie 生成脚本跨平台；host 路径已在 macOS 实测） |
 | `docs/login-page.png` | 登录页截图 |
 
 ## License
