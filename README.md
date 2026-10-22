@@ -136,6 +136,10 @@ sudo bash install-relay.sh \
   --container-conf-dir /usr/local/openresty/nginx/conf/conf.d
 ```
 
+> `--conf-dir` 是**宿主机上写文件的位置**，`--container-conf-dir` 是 **nginx 容器里看到的路径**，
+> 两者是同一份目录的两种视角。写反了不会报参数错，但渲染出的 vhost 里 `include` 会指向
+> 容器里不存在的路径，`nginx -t` 报 `open() ... failed (No such file or directory)`。
+
 > 1Panel 在站点设置变化时可能重写 vhost。若登录页突然 404，重新跑一次
 > `install-relay.sh` 即可（备份和热重载都在脚本里）。
 
