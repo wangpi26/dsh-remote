@@ -1,0 +1,8 @@
+# Placeholder rendered by relay/install-relay.sh.
+#
+# Replace this file with a real cookie pushed from the DSH host:
+#   host/windows/refresh-cookie.ps1 -Authority <domain> -RelayHost <relay> ...
+#   host/macos/refresh-cookie.sh   --authority <domain> --relay-host <relay> ...
+#
+# Until then /login returns 500 (the login page needs $dsh_cookie).
+set $dsh_cookie "";

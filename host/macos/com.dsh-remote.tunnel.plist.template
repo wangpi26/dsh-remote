@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dsh-remote.tunnel</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__TUNNEL_SCRIPT__</string>
+        <string>--relay-host</string>
+        <string>__RELAY_HOST__</string>
+        <string>--relay-user</string>
+        <string>__RELAY_USER__</string>
+        <string>--identity-file</string>
+        <string>__IDENTITY_FILE__</string>
+        <string>--remote-port</string>
+        <string>__REMOTE_PORT__</string>
+        <string>--state-dir</string>
+        <string>__STATE_DIR__</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>__STATE_DIR__/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__STATE_DIR__/launchd.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

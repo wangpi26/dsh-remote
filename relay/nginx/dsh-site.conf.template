@@ -1,0 +1,63 @@
+# dsh-remote relay vhost for __DOMAIN__ (rendered by relay/install-relay.sh).
+#
+# The upstream is the loopback end of the reverse SSH tunnel that the DSH host
+# opens (the host connects out, so the desktop machine needs no open ports).
+server {
+    listen 80;
+    server_name __DOMAIN__;
+
+    # HTTP-01 certificate issuance/renewal.
+    location ^~ /.well-known/acme-challenge/ { root __ACME_ROOT__; }
+    location / { return 301 https://__DOMAIN__$request_uri; }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name __DOMAIN__;
+
+    ssl_certificate     __SSL_CERT__;
+    ssl_certificate_key __SSL_KEY__;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # The nginx -> DSH hop runs in cleartext inside the SSH tunnel; HSTS keeps
+    # browsers on HTTPS so the browser cookie is never sent over cleartext.
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    # DSH enforces its own upload limits.
+    client_max_body_size 0;
+
+    # Login page: validates username/password, then serves the signed DSH
+    # browser cookie. $dsh_cookie comes from dsh-cookie.inc, which the host
+    # re-mints and pushes on a schedule (30-day DSH cookie lifetime).
+    location = /login {
+        include __CONF_DIR__/dsh-cookie.inc;
+        content_by_lua_file __CONF_DIR__/dsh-login.lua;
+    }
+
+    # Legacy pairing URL: browsers go to the login page.
+    location = /pair { return 302 /login; }
+
+    # HTML navigations rejected by DSH go to the login page; API/WebSocket
+    # requests keep their 401 so clients see a real authentication failure.
+    location @dsh_login_redirect {
+        if ($http_accept ~* "text/html") { return 302 /login; }
+        return 401;
+    }
+
+    location / {
+        proxy_pass http://__UPSTREAM__;
+        proxy_intercept_errors on;
+        error_page 401 = @dsh_login_redirect;
+
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_request_buffering off;
+
+        # Long-running agent turns and event streams must not be cut early.
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+}

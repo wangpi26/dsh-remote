@@ -1,0 +1,22 @@
+# Secrets and runtime artifacts - never commit these.
+*.inc
+!*.inc.template
+*.key
+*.pem
+id_ed25519*
+id_rsa*
+known_hosts
+*.log
+dsh-cookie.inc
+cordis.patch.yml
+.credentials.yaml
+credentials.yaml
+.env
+
+# Backups produced by the scripts
+*.bak-*
+*.bak
+
+# Python
+__pycache__/
+*.pyc

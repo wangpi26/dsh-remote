@@ -1,0 +1,105 @@
+-- dsh-remote login handler (OpenResty ngx_lua), rendered by install-relay.sh.
+-- Served at /login: verifies account/password, then hands out the signed DSH
+-- browser cookie carried by dsh-cookie.inc as $dsh_cookie.
+--
+-- The credential check is a salted MD5 (ngx.md5); it is a gate, not a password
+-- database. Use a long random password (install-relay.sh generates one).
+local USER = "__LOGIN_USER__"
+local SALT = "__LOGIN_SALT__"
+local HASH = "__LOGIN_HASH__"
+
+local PAGE_HEAD = [==[
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<meta name="robots" content="noindex,nofollow">
+<title>DeepSeek Harness · 登录</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;display:flex;align-items:center;justify-content:center;padding:24px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif;color:#e8eef7;background:radial-gradient(1200px 800px at 20% -10%,#1b2a41 0%,#0b0f14 55%,#07090c 100%)}
+.card{width:100%;max-width:400px;padding:32px 28px;border:1px solid rgba(255,255,255,.09);border-radius:20px;background:rgba(255,255,255,.04);box-shadow:0 30px 80px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.06)}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:26px}
+.mark{display:flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,#4f8cff,#7b5cff);font-size:16px;font-weight:700;color:#fff;letter-spacing:.5px}
+h1{margin:0;font-size:18px;font-weight:600;letter-spacing:.2px}
+.sub{margin:3px 0 0;font-size:12px;color:#8ea0b8}
+label{display:block;margin:16px 0 8px;font-size:13px;color:#a9b8cc}
+input{width:100%;height:46px;padding:0 14px;border:1px solid rgba(255,255,255,.12);border-radius:12px;background:rgba(0,0,0,.25);color:#e8eef7;font-size:16px;outline:none;transition:border-color .15s,box-shadow .15s}
+input:focus{border-color:#4f8cff;box-shadow:0 0 0 3px rgba(79,140,255,.18)}
+button{width:100%;height:48px;margin-top:22px;border:0;border-radius:12px;background:linear-gradient(135deg,#4f8cff,#6a5cff);color:#fff;font-size:16px;font-weight:600;cursor:pointer}
+button:active{transform:translateY(1px)}
+.err{margin-bottom:18px;padding:10px 12px;border:1px solid rgba(255,86,86,.3);border-radius:10px;background:rgba(255,86,86,.12);color:#ffb4b4;font-size:13px}
+.foot{margin:24px 0 0;font-size:12px;line-height:1.7;color:#6f8098;text-align:center}
+</style>
+</head>
+<body>
+<main class="card">
+<div class="brand">
+<div class="mark">DS</div>
+<div><h1>DeepSeek Harness</h1><p class="sub">远程入口 · 需要登录</p></div>
+</div>
+]==]
+local PAGE_FORM = [==[
+<form method="post" action="/login" autocomplete="on">
+<label for="u">账号</label>
+<input id="u" name="u" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="请输入账号" required autofocus>
+<label for="p">密码</label>
+<input id="p" name="p" type="password" autocomplete="current-password" placeholder="请输入密码" required>
+<button type="submit">登录</button>
+</form>
+<p class="foot">仅限授权设备使用 · 登录后 30 天内免登录</p>
+</main>
+</body>
+</html>
+]==]
+
+local function send(status, err)
+  ngx.status = status
+  ngx.header["Content-Type"] = "text/html; charset=utf-8"
+  ngx.header["Cache-Control"] = "no-store"
+  ngx.header["X-Frame-Options"] = "DENY"
+  ngx.header["X-Content-Type-Options"] = "nosniff"
+  ngx.header["Referrer-Policy"] = "no-referrer"
+  ngx.header["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+  ngx.print(PAGE_HEAD)
+  if err then
+    ngx.print('<div class="err">', err, '</div>')
+  end
+  ngx.print(PAGE_FORM)
+end
+
+local method = ngx.req.get_method()
+if method == "GET" or method == "HEAD" then
+  return send(200)
+end
+if method ~= "POST" then
+  ngx.status = 405
+  ngx.header["Allow"] = "GET, HEAD, POST"
+  return ngx.print("method not allowed")
+end
+
+ngx.req.read_body()
+local args = ngx.req.get_post_args(10) or {}
+local u = args.u
+local p = args.p
+if type(u) == "table" then u = u[1] end
+if type(p) == "table" then p = p[1] end
+
+if type(u) == "string" and type(p) == "string"
+   and u == USER and ngx.md5(SALT .. p) == HASH then
+  local cookie = ngx.var.dsh_cookie
+  if not cookie or cookie == "" then
+    ngx.log(ngx.ERR, "dsh-login: $dsh_cookie is missing in config")
+    return send(500, "服务端配置错误")
+  end
+  ngx.header["Set-Cookie"] = cookie
+  ngx.header["Cache-Control"] = "no-store"
+  return ngx.redirect("/", 302)
+end
+
+ngx.sleep(0.4)
+return send(401, "账号或密码错误")

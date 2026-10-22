@@ -1,0 +1,5 @@
+# Keep shell/python/lua/markdown files LF regardless of the checkout OS; the
+# relay runs Linux. PowerShell handles LF fine as well.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.png binary
